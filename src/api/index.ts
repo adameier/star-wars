@@ -1,24 +1,14 @@
 import * as S from "@effect/schema/Schema";
-import { FetchError, RequestError } from "./errors";
+// import { FetchError, RequestError } from "./errors";
 import { FilmResultsSchema } from "../schema";
+import { ofetch, FetchOptions } from 'ofetch'
 
+export class ParseError extends Error {}
 
-const swapiFetch = (url: string, signal?: AbortSignal) => fetch(url, {signal})
-    .catch(e => {
-        throw new FetchError()
+export const getFilms = (options: FetchOptions) => ofetch(`https://swapi.dev/api/films`, options)
+  .then(body => S.parsePromise(FilmResultsSchema)(body)
+    .catch(() => {
+      throw new ParseError()
     })
-    .then(async res => {
-        if (res.status === 200 || res.status === 304) {
-            try {
-                return await (res.json() as Promise<unknown>);
-            } catch (e) {
-                throw new RequestError();
-            }
-        }
-        throw new RequestError()
-    })    
-    
-    
-export const getFilms = (signal?: AbortSignal) => swapiFetch(`https://swapi.dev/api/films`, signal)
-    .then(S.parse(FilmResultsSchema))
-    .then(data => data.results)
+  )
+  .then(data => data.results)

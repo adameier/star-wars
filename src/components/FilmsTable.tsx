@@ -1,30 +1,45 @@
-import { useEffect, useMemo, useState } from "react"
+import { FC, useEffect, useState } from "react"
 import { useAppDispatch, useAppSelector } from "../store/hooks"
-import { selectFilms, useFilms } from "../store/selectors"
-import { setFilmsData, setFilmsError, setFilmsLoading } from "../store/filmSlice"
-import { getFilms } from "../api"
-import { ColumnDef, SortingState, createColumnHelper, flexRender, getCoreRowModel, getSortedRowModel, useReactTable } from "@tanstack/react-table"
+import { selectFilms } from "../store/selectors"
+import { filmsRequestCanceled, setFilmsData, setFilmsError, setFilmsLoading, setViewedFilmUrl } from "../store/filmSlice"
+import { ParseError, getFilms } from "../api"
+import {  SortDirection, SortingState, createColumnHelper, flexRender, getCoreRowModel, getSortedRowModel, useReactTable } from "@tanstack/react-table"
 import { Film } from "../schema"
+import { FetchError } from 'ofetch'
+
 import {format} from 'date-fns/fp'
-
-import * as Rec from "@effect/data/ReadonlyRecord";
-import * as Arr from "@effect/data/ReadonlyArray";
-import { pipe } from '@effect/data/Function'
-
-const numeralsMap: Record<number, string> = {
-  1: 'I',
-  2: 'II',
-  3: 'III',
-  4: 'IV',
-  5: 'V',
-  6: 'VI'
-}
+import { numeralsMap } from "../util/numerals"
+import Loader from "./Loader"
 
 const columnHelper = createColumnHelper<Film>()
 
+const SortRenderer = ({ sorted }: { sorted: false | SortDirection })  => <>
+  {sorted === false && <span className="text-6 i-radix-icons:caret-sort"></span>}
+  {sorted === 'asc' && <span className="text-6 i-radix-icons:caret-up"></span>}
+  {sorted === 'desc' && <span className="text-6 i-radix-icons:caret-down"></span>}
+</>
+
+const ViewDetailsButton: FC<{filmUrl: string}> = ({filmUrl}) => {
+  const dispatch = useAppDispatch()
+
+  const onClick = () => {
+    dispatch(setViewedFilmUrl(filmUrl))
+  }
+
+  return (
+    <button className="rounded-full pl-2 pr-1.5 py-1 flex items-center gap-2 bg-white/10 hover:bg-white/20" onClick={onClick}>
+      <span>View details</span><span className="text-6 i-radix-icons:info-circled" />
+    </button>
+  )
+}
+
 const columns = [
   columnHelper.accessor('episode_id', {
-    header: () => <span className="self-center">Episode</span>,
+    header: info => (
+      <span className="self-center flex items-center">
+        <span className="mr-1">Episode</span><SortRenderer sorted={info.column.getIsSorted()} />
+      </span>
+    ),
     cell:  info => <span className="block w-full text-center">{numeralsMap[info.getValue()]}</span>,
     enableSorting: true,
     sortDescFirst: false
@@ -35,18 +50,26 @@ const columns = [
     enableSorting: false
   }),
   columnHelper.accessor('release_date', {
-    header: () => <span className="self-end">Release date</span>,
+    header: info => (
+      <span className="self-end flex items-center">
+        <span className="mr-1">Release date</span><SortRenderer sorted={info.column.getIsSorted()} />
+      </span>
+    ),
     cell: info => <span className="self-end">{format('MMM d, Y', new Date(info.getValue()))}</span>,
     enableSorting: true,
     sortingFn: 'datetime'
   }),
   columnHelper.display({
     id: 'action',
-    cell: 'click here'
+    cell: info => (
+      <div className="self-center">
+        <ViewDetailsButton filmUrl={info.row.original.url} />
+      </div>
+    )
   })
 ]
 
-const FilmsTable = () => {
+const FilmsTable: FC = () => {
     
   const dispatch = useAppDispatch()
 
@@ -54,20 +77,31 @@ const FilmsTable = () => {
 
   const status = useAppSelector(state => state.films.status)
 
+  const [requestCompleted, setRequestCompleted] = useState(false)
+
   useEffect(() => {
     const controller = new AbortController()
 
-    dispatch(setFilmsLoading())
-    getFilms(controller.signal)
-      .then(films => dispatch(setFilmsData(films)))
-      .catch(e => {
-        dispatch(setFilmsError())}
-      )
+    if (!requestCompleted) {
+      dispatch(setFilmsLoading())   
+      getFilms({signal: controller.signal})
+        .then(films => dispatch(setFilmsData(films)))
+        .then(() => {
+          setRequestCompleted(true)
+        })
+        .catch((e) => {
+          if (e instanceof ParseError || (e instanceof FetchError && e.statusCode)) {
+            dispatch(setFilmsError())
+            return
+          }
+          dispatch(filmsRequestCanceled())
+        })
+    }
 
     return () => {
       controller.abort()
     }
-  }, [dispatch])
+  }, [dispatch, requestCompleted])
 
   const [sorting, setSorting] = useState<SortingState>([])
 
@@ -84,11 +118,12 @@ const FilmsTable = () => {
 
   return (
     <>
-      {status === 'loading'
-      ? 
-      <div>Loading</div>
-      : <div className="w-full rounded-2 border-1px border-slate-7 shadow-2xl shadow-slate-600/50">
-          <table className="w-full rounded-2 overflow-hidden">
+      {status !== 'success'
+      ? <div className="flex justify-center pt-6">
+          <Loader />
+        </div>
+      : <div className="w-full overflow-x-auto rounded-2 border-1px border-slate-7 shadow-2xl shadow-slate-600/50">
+          <table className="min-w-600px w-full rounded-2 overflow-hidden">
             <thead className="bg-gray-9">
               {table.getHeaderGroups().map(headerGroup => (
                 <tr key={headerGroup.id}>
